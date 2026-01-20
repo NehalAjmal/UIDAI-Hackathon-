@@ -85,82 +85,86 @@ master_df['norm_updates'] = master_df['total_updates'] / master_df['total_update
 # Formula: 40% weight to Growth, 60% to Maintenance
 master_df['SII_Score'] = (0.4 * master_df['norm_enrol']) + (0.6 * master_df['norm_updates'])
 
-# --- PART 4: AI/ML ENHANCEMENT (K-Means Clustering) ---
+# --- PART 4: ROBUST CLUSTERING & LABELING ---
 
-# Prepare data for ML
+from sklearn.cluster import KMeans
+
+# Prepare data
 features = master_df[['norm_enrol', 'norm_updates']].copy()
 
-# 1. Determine optimal clusters (Elbow Method simplified -> we'll use 4 for business logic)
-# Cluster 0: Low Activity (Remote/Rural)
-# Cluster 1: Maintenance Heavy (Metro/Migration Hubs)
-# Cluster 2: Balanced/High Growth (Developing Cities)
-# Cluster 3: Outliers/Super Critical
-
+# Run K-Means (4 Clusters)
 kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
 master_df['Cluster_ID'] = kmeans.fit_predict(features)
 
-# Label the clusters meaningfully (Manual mapping based on centroids)
-# We calculate mean values to assign names automatically
-cluster_summary = master_df.groupby('Cluster_ID')[['norm_enrol', 'norm_updates']].mean()
+# --- THE FIX: DYNAMIC LABELING BASED ON RANK ---
+# Instead of guessing thresholds, we rank clusters by their "Intensity"
 
-def label_cluster(row):
-    if row['norm_enrol'] > 0.5 and row['norm_updates'] > 0.5:
-        return 'Critical High-Traffic'
-    elif row['norm_updates'] > row['norm_enrol']:
-        return 'Maintenance-Heavy (Urban)'
-    elif row['norm_enrol'] > row['norm_updates']:
-        return 'Growth-Driven (Rural/New)'
-    else:
-        return 'Low-Intensity / Stable'
+# 1. Calculate the mean SII_Score for each cluster
+cluster_stats = master_df.groupby('Cluster_ID')[['SII_Score', 'norm_enrol', 'norm_updates']].mean()
 
-# Apply names to the clusters dynamically
+# 2. Sort clusters from Highest Impact to Lowest
+sorted_clusters = cluster_stats.sort_values('SII_Score', ascending=False).index.tolist()
+
+# 3. Assign labels based on Rank
 cluster_names = {}
-for cluster_id, row in cluster_summary.iterrows():
-    cluster_names[cluster_id] = label_cluster(row)
 
+# Rank 1: The cluster with the highest scores
+cluster_names[sorted_clusters[0]] = 'Critical High-Traffic (Metro)'
+
+# Rank 4: The cluster with the lowest scores
+cluster_names[sorted_clusters[-1]] = 'Low-Intensity / Stable'
+
+# Middle Clusters: Distinguish by Type (Growth vs Maintenance)
+for cluster_id in sorted_clusters[1:-1]:
+    row = cluster_stats.loc[cluster_id]
+    # If Updates are dominant relative to Enrolment
+    if row['norm_updates'] > row['norm_enrol']:
+        cluster_names[cluster_id] = 'Maintenance-Heavy (Urban)'
+    else:
+        cluster_names[cluster_id] = 'Growth-Driven (Rural/Dev)'
+
+# Map the names back
 master_df['Cluster_Label'] = master_df['Cluster_ID'].map(cluster_names)
 
-# --- PART 5: ADVANCED INSIGHTS GENERATION ---
+# --- PART 5: INSIGHTS & VISUALIZATION ---
 
-print("\n=== ML-DRIVEN CLUSTER ANALYSIS ===")
+print("\n=== CORRECTED CLUSTER RESULTS ===")
 print(master_df['Cluster_Label'].value_counts())
 
-print("\nTop 3 Districts in 'Critical High-Traffic' Cluster:")
-critical_districts = master_df[master_df['Cluster_Label'] == 'Critical High-Traffic']
-print(critical_districts[['state', 'district', 'total_enrol', 'total_updates']].head(3))
+print("\nTop 5 Districts in 'Critical High-Traffic' Cluster:")
+critical = master_df[master_df['Cluster_Label'] == 'Critical High-Traffic (Metro)']
+print(critical[['state', 'district', 'SII_Score', 'total_enrol', 'total_updates']].sort_values('SII_Score', ascending=False).head(5))
 
-# --- PART 6: PROFESSIONAL VISUALIZATION ---
-
+# Visualization
 plt.figure(figsize=(12, 8))
 sns.scatterplot(
     data=master_df, 
     x='norm_enrol', 
     y='norm_updates', 
-    hue='Cluster_Label',  # Color by ML Cluster
+    hue='Cluster_Label', 
     style='Cluster_Label',
-    palette='deep',
-    s=100,
+    palette='Set1',
+    s=100, 
     alpha=0.7
 )
 
-# Annotate extreme outliers
-top_outliers = master_df.sort_values(by='SII_Score', ascending=False).head(7)
-for i in range(len(top_outliers)):
-    row = top_outliers.iloc[i]
+# Annotate Top 3 Critical Districts
+top_3 = critical.sort_values('SII_Score', ascending=False).head(3)
+for i in range(len(top_3)):
+    row = top_3.iloc[i]
     plt.text(
-        row['norm_enrol']+0.01, 
+        row['norm_enrol'], 
         row['norm_updates'], 
         row['district'], 
-        fontsize=9, 
+        fontsize=10, 
         weight='bold'
     )
 
-plt.title('AI-Driven Segmentation of Aadhaar Service Demand', fontsize=14)
-plt.xlabel('Normalized Enrolment Intensity (Growth)', fontsize=12)
-plt.ylabel('Normalized Update Intensity (Maintenance)', fontsize=12)
-plt.legend(title='District Service Persona', loc='upper left', bbox_to_anchor=(1, 1))
-plt.grid(True, linestyle='--', alpha=0.5)
-plt.tight_layout()
+plt.title('AI-Driven Service Segmentation (Corrected)', fontsize=14)
+plt.xlabel('Growth Demand (Normalized)', fontsize=12)
+plt.ylabel('Maintenance Demand (Normalized)', fontsize=12)
+plt.legend(title='District Persona')
+plt.grid(True, alpha=0.3)
 
-plt.savefig('ml_cluster_analysis.png')
-print("\nAdvanced ML Plot saved as 'ml_cluster_analysis.png'.")
+plt.savefig('ml_cluster_analysis_fixed.png')
+print("\nFixed plot saved as 'ml_cluster_analysis_fixed.png'.")
